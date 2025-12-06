@@ -44,7 +44,7 @@ export default function LoginPage() {
 
         {/* LEFT - FORM */}
         <div className="auth-left">
-          <div className="auth-logo">🛹 Skates Insights</div>
+          <div className="auth-logo">Skates Insights</div>
 
           <h2 className="auth-title">Agent Login</h2>
 
