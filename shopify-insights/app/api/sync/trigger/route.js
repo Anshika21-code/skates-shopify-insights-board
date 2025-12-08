@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { IngestionService } from '@/lib/services/ingestion';
@@ -21,9 +23,15 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    // 👉 Single tenant sync
     if (requestedTenantId) {
-      const tenant = await prisma.tenant.findUnique({ where: { id: requestedTenantId } });
-      if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: requestedTenantId },
+      });
+
+      if (!tenant) {
+        return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+      }
 
       const syncJob = await prisma.syncJob.create({
         data: {
@@ -36,28 +44,46 @@ export async function POST(request) {
         },
       });
 
-      const ingestion = new IngestionService(tenant.id, tenant.shopDomain, tenant.accessToken);
+      const ingestion = new IngestionService(
+        tenant.id,
+        tenant.shopDomain,
+        tenant.accessToken
+      );
 
       ingestion
         .syncAll()
         .then(async () => {
           await prisma.syncJob.update({
             where: { id: syncJob.id },
-            data: { status: 'success', completedAt: new Date() },
+            data: {
+              status: 'success',
+              completedAt: new Date(),
+            },
           });
         })
         .catch(async (err) => {
           await prisma.syncJob.update({
             where: { id: syncJob.id },
-            data: { status: 'failed', errorMessage: String(err), completedAt: new Date() },
+            data: {
+              status: 'failed',
+              errorMessage: String(err),
+              completedAt: new Date(),
+            },
           });
         });
 
-      return NextResponse.json({ message: 'Sync started', jobId: syncJob.id }, { status: 202 });
+      return NextResponse.json(
+        { message: 'Sync started', jobId: syncJob.id },
+        { status: 202 }
+      );
     }
 
+    // 👉 Full sync for all active tenants (admin only)
     if (!isAdmin) {
-      return NextResponse.json({ error: 'Only admins can trigger full sync' }, { status: 403 });
+      return NextResponse.json(
+        { error: 'Only admins can trigger full sync' },
+        { status: 403 }
+      );
     }
 
     const syncJob = await prisma.syncJob.create({
@@ -70,7 +96,9 @@ export async function POST(request) {
       },
     });
 
-    const tenants = await prisma.tenant.findMany({ where: { isActive: true } });
+    const tenants = await prisma.tenant.findMany({
+      where: { isActive: true },
+    });
 
     tenants.forEach((tenant) => {
       (async () => {
@@ -79,33 +107,49 @@ export async function POST(request) {
             tenantId: tenant.id,
             parentJobId: syncJob.id,
             status: 'started',
-            triggeredBy: session.user?.id ? `user:${session.user.id}` : 'api',
+            triggeredBy: session.user?.id
+              ? `user:${session.user.id}`
+              : 'api',
             startedAt: new Date(),
             entityType: 'all',
             syncType: 'manual',
           },
         });
 
-        const ingestion = new IngestionService(tenant.id, tenant.shopDomain, tenant.accessToken);
+        const ingestion = new IngestionService(
+          tenant.id,
+          tenant.shopDomain,
+          tenant.accessToken
+        );
 
         ingestion
           .syncAll()
           .then(async () => {
             await prisma.syncJob.update({
               where: { id: child.id },
-              data: { status: 'success', completedAt: new Date() },
+              data: {
+                status: 'success',
+                completedAt: new Date(),
+              },
             });
           })
           .catch(async (err) => {
             await prisma.syncJob.update({
               where: { id: child.id },
-              data: { status: 'failed', errorMessage: String(err), completedAt: new Date() },
+              data: {
+                status: 'failed',
+                errorMessage: String(err),
+                completedAt: new Date(),
+              },
             });
           });
       })();
     });
 
-    return NextResponse.json({ message: 'Full sync started', jobId: syncJob.id }, { status: 202 });
+    return NextResponse.json(
+      { message: 'Full sync started', jobId: syncJob.id },
+      { status: 202 }
+    );
   } catch (err) {
     console.error('Sync trigger error:', err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
